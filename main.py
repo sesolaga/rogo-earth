@@ -161,12 +161,13 @@ hole_color = st.color_picker("Color for holes", "#ffffff")
 use_spherical = st.toggle("🌐 Use spherical (Turf-style) area calculation", value=True)
 use_acres = st.toggle("📏 Show area in Acres", value=True)
 
+
 if uploaded_files:
     gdfs = []
     map_center = [39.5, -98.35]
-    m = leafmap.Map(center=map_center, zoom=4, height=600)
+    zoom = 4
+    m = leafmap.Map(center=map_center, zoom=zoom, height=600)
     map_bounds = []
-
     color_legend = []
 
     for file_idx, file in enumerate(uploaded_files):
@@ -216,6 +217,17 @@ if uploaded_files:
 
     st.subheader("🗺️ Map View")
 
+    st.subheader("🗂️ Map Layer Controls")
+    layer_visibility = {}
+    for gdf in gdfs:
+        source_name = gdf["source"].iloc[0]
+        layer_visibility[source_name] = st.checkbox(
+            f"Show layer: {source_name}", value=True
+        )
+
+    show_holes = st.checkbox("Show holes", value=True)
+    show_diff = st.checkbox("Show boundary differences (if 2 files)", value=True)
+
     for gdf in gdfs:
         source_name = gdf["source"].iloc[0]
         st.subheader(f"📏 Area Table: {source_name}")
@@ -264,49 +276,54 @@ if uploaded_files:
         total = edited_df[label][edited_df["Visible"]].sum()
         st.markdown(f"**Total: {round(total, 2)} {label}**")
 
-        for idx, row in gdf.iterrows():
-            if row["enabled"]:
-                highlight = row["poly_id"] == selected_poly_id
-                gdf_row = gpd.GeoDataFrame([row], crs=gdf.crs)
-                m.add_gdf(
-                    gdf_row,
-                    layer_name=f"{row['poly_id']} ({source_name})",
-                    style={
-                        "fillOpacity": 0.8 if highlight else 0.4,
-                        "weight": 4 if highlight else 1,
-                        "color": (
-                            "#FFD700"
-                            if highlight
-                            else file_colors.get(source_name, "#000000")
-                        ),
-                        "fillColor": (
-                            "#FFD700"
-                            if highlight
-                            else file_colors.get(source_name, "#000000")
-                        ),
-                    },
-                    info_mode="on_hover",
-                )
-                map_bounds.append(row.geometry.bounds)
-
-                for hole in extract_holes(row.geometry):
+        if layer_visibility.get(source_name, True):
+            for idx, row in gdf.iterrows():
+                if row["enabled"]:
+                    highlight = row["poly_id"] == selected_poly_id
+                    gdf_row = gpd.GeoDataFrame([row], crs=gdf.crs)
                     m.add_gdf(
-                        gpd.GeoDataFrame(geometry=[hole], crs=gdf.crs),
-                        layer_name="hole",
+                        gdf_row,
+                        layer_name=f"{row['poly_id']} ({source_name})",
                         style={
-                            "color": hole_color,
-                            "fillColor": hole_color,
-                            "fillOpacity": 1,
+                            "fillOpacity": 0.8 if highlight else 0.4,
+                            "weight": 4 if highlight else 1,
+                            "color": (
+                                "#FFD700"
+                                if highlight
+                                else file_colors.get(source_name, "#000000")
+                            ),
+                            "fillColor": (
+                                "#FFD700"
+                                if highlight
+                                else file_colors.get(source_name, "#000000")
+                            ),
                         },
+                        info_mode="on_hover",
                     )
+                    map_bounds.append(row.geometry.bounds)
+
+                    if show_holes:
+                        for hole in extract_holes(row.geometry):
+                            m.add_gdf(
+                                gpd.GeoDataFrame(geometry=[hole], crs=gdf.crs),
+                                layer_name="hole",
+                                style={
+                                    "color": hole_color,
+                                    "fillColor": hole_color,
+                                    "fillOpacity": 1,
+                                },
+                            )
 
     if map_bounds:
+        st.sidebar.write("map bounds", map_bounds)
         try:
             minx = min(b[0] for b in map_bounds)
             miny = min(b[1] for b in map_bounds)
             maxx = max(b[2] for b in map_bounds)
             maxy = max(b[3] for b in map_bounds)
             m.fit_bounds([[miny, minx], [maxy, maxx]])
+
+            st.sidebar.write("miny minx maxy maxx", miny, minx, maxy, maxx)
         except Exception as e:
             st.warning(f"Could not set map bounds: {e}")
 
@@ -337,7 +354,7 @@ if uploaded_files:
         comp_df["Difference"] = (comp_df.iloc[:, 0] - comp_df.iloc[:, 1]).round(2)
         st.dataframe(comp_df)
 
-    if len(gdfs) == 2:
+    if len(gdfs) == 2 and show_diff:
         st.subheader("📌 Boundary Difference")
         try:
             poly1 = unary_union(gdfs[0].geometry)
