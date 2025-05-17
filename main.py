@@ -9,7 +9,7 @@ import leafmap.foliumap as leafmap
 import pandas as pd
 import streamlit as st
 from pyproj import Geod
-from shapely.geometry import MultiPolygon, Polygon, GeometryCollection
+from shapely.geometry import GeometryCollection, MultiPolygon, Polygon
 from shapely.geometry.base import BaseGeometry
 from shapely.ops import unary_union
 from shapely.validation import make_valid
@@ -21,9 +21,16 @@ ACRES_PER_SQ_METER = 0.000247105
 geod = Geod(ellps="WGS84")
 
 COLOR_PALETTE = [
-    "#1f77b4", "#ff7f0e", "#2ca02c", "#d62728",
-    "#9467bd", "#8c564b", "#e377c2", "#7f7f7f",
-    "#bcbd22", "#17becf"
+    "#1f77b4",
+    "#ff7f0e",
+    "#2ca02c",
+    "#d62728",
+    "#9467bd",
+    "#8c564b",
+    "#e377c2",
+    "#7f7f7f",
+    "#bcbd22",
+    "#17becf",
 ]
 
 
@@ -66,7 +73,9 @@ def geodetic_area(geometry: BaseGeometry) -> float:
         area, _ = geod.geometry_area_perimeter(geometry)
         return abs(area)
     elif geometry.geom_type == "MultiPolygon":
-        return sum(abs(geod.geometry_area_perimeter(poly)[0]) for poly in geometry.geoms)
+        return sum(
+            abs(geod.geometry_area_perimeter(poly)[0]) for poly in geometry.geoms
+        )
     return 0
 
 
@@ -90,7 +99,9 @@ def count_parts(geometry: BaseGeometry) -> int:
     elif isinstance(geometry, MultiPolygon):
         return len([g for g in geometry.geoms if isinstance(g, (Polygon))])
     elif isinstance(geometry, GeometryCollection):
-        return len([g for g in geometry.geoms if isinstance(g, (Polygon, MultiPolygon))])
+        return len(
+            [g for g in geometry.geoms if isinstance(g, (Polygon, MultiPolygon))]
+        )
 
     return 0
 
@@ -124,9 +135,16 @@ uploaded_files = st.file_uploader(
 )
 
 COLOR_PALETTE = [
-    "#1f77b4", "#ff7f0e", "#2ca02c", "#d62728",
-    "#9467bd", "#8c564b", "#e377c2", "#7f7f7f",
-    "#bcbd22", "#17becf"
+    "#1f77b4",
+    "#ff7f0e",
+    "#2ca02c",
+    "#d62728",
+    "#9467bd",
+    "#8c564b",
+    "#e377c2",
+    "#7f7f7f",
+    "#bcbd22",
+    "#17becf",
 ]
 
 file_colors = {}
@@ -134,7 +152,9 @@ if uploaded_files:
     st.markdown("### 🎨 Choose Boundary Colors")
     for idx, file in enumerate(uploaded_files):
         default_color = COLOR_PALETTE[idx % len(COLOR_PALETTE)]
-        file_colors[file.name] = st.color_picker(f"Color for {file.name}", default_color)
+        file_colors[file.name] = st.color_picker(
+            f"Color for {file.name}", default_color
+        )
 
 hole_color = st.color_picker("Color for holes", "#ffffff")
 
@@ -166,7 +186,9 @@ if uploaded_files:
                         gdf_proj = gdf.to_crs(epsg=5070)
                         st.warning("EPSG:6933 not available. Using EPSG:5070 instead.")
                     except Exception:
-                        st.warning("EPSG:6933 and 5070 unavailable. Falling back to EPSG:3857.")
+                        st.warning(
+                            "EPSG:6933 and 5070 unavailable. Falling back to EPSG:3857."
+                        )
                         gdf_proj = gdf.to_crs(epsg=3857)
                 gdf["area_m2"] = gdf_proj.area
 
@@ -212,6 +234,16 @@ if uploaded_files:
             }
         )
 
+        selected_poly_id = st.selectbox(
+            f"Select a polygon to highlight from {source_name}",
+            options=gdf["poly_id"],
+            index=(
+                0
+                if st.session_state.get("clicked_poly_id") not in gdf["poly_id"].values
+                else gdf["poly_id"].tolist().index(st.session_state["clicked_poly_id"])
+            ),
+        )
+
         edited_df = st.data_editor(
             df_table.set_index("ID"),
             use_container_width=True,
@@ -234,14 +266,24 @@ if uploaded_files:
 
         for idx, row in gdf.iterrows():
             if row["enabled"]:
+                highlight = row["poly_id"] == selected_poly_id
                 gdf_row = gpd.GeoDataFrame([row], crs=gdf.crs)
                 m.add_gdf(
                     gdf_row,
                     layer_name=f"{row['poly_id']} ({source_name})",
                     style={
-                        "fillOpacity": 0.4,
-                        "color": file_colors.get(gdf["source"].iloc[0], "#000000"),
-                        "fillColor": file_colors.get(gdf["source"].iloc[0], "#000000"),
+                        "fillOpacity": 0.8 if highlight else 0.4,
+                        "weight": 4 if highlight else 1,
+                        "color": (
+                            "#FFD700"
+                            if highlight
+                            else file_colors.get(source_name, "#000000")
+                        ),
+                        "fillColor": (
+                            "#FFD700"
+                            if highlight
+                            else file_colors.get(source_name, "#000000")
+                        ),
                     },
                     info_mode="on_hover",
                 )
@@ -273,9 +315,12 @@ if uploaded_files:
     # Display color legend
     with st.expander("🎨 Color Legend", expanded=True):
         for name, color in color_legend:
-            st.markdown(f"<div style='display:flex;align-items:center;gap:10px;'>"
-                        f"<div style='width:20px;height:20px;background:{color};border-radius:3px;'></div>"
-                        f"<span>{name}</span></div>", unsafe_allow_html=True)
+            st.markdown(
+                f"<div style='display:flex;align-items:center;gap:10px;'>"
+                f"<div style='width:20px;height:20px;background:{color};border-radius:3px;'></div>"
+                f"<span>{name}</span></div>",
+                unsafe_allow_html=True,
+            )
 
     # Comparison Tables
     if len(gdfs) >= 2:
