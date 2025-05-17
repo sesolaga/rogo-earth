@@ -315,7 +315,6 @@ if uploaded_files:
                             )
 
     if map_bounds:
-        st.sidebar.write("map bounds", map_bounds)
         try:
             minx = min(b[0] for b in map_bounds)
             miny = min(b[1] for b in map_bounds)
@@ -323,7 +322,6 @@ if uploaded_files:
             maxy = max(b[3] for b in map_bounds)
             m.fit_bounds([[miny, minx], [maxy, maxx]])
 
-            st.sidebar.write("miny minx maxy maxx", miny, minx, maxy, maxx)
         except Exception as e:
             st.warning(f"Could not set map bounds: {e}")
 
