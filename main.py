@@ -129,13 +129,13 @@ def get_poly_type(geometry: BaseGeometry) -> str:
 
 # UI
 uploaded_files = st.file_uploader(
-    "Upload 1 or more field boundary files (ZIP, KML, KMZ, GeoJSON)",
+    "Upload 1 or 2 field boundary files (ZIP, KML, KMZ, GeoJSON)",
     type=["zip", "kml", "kmz", "geojson", "json"],
     accept_multiple_files=True,
 )
 
 COLOR_PALETTE = [
-    "#1f77b4",
+    "#cc7ee4",
     "#ff7f0e",
     "#2ca02c",
     "#d62728",
@@ -292,17 +292,15 @@ if uploaded_files:
                         gdf_row,
                         layer_name=f"{row['poly_id']} ({source_name})",
                         style={
-                            "fillOpacity": 0.8 if highlight else 0.4,
+                            "fillOpacity": 0.9 if highlight else 0.4,
                             "weight": 4 if highlight else 1,
                             "color": (
-                                "#FFD700"
+                                "lightgreen"
                                 if highlight
                                 else file_colors.get(source_name, "#000000")
                             ),
                             "fillColor": (
-                                "#FFD700"
-                                if highlight
-                                else file_colors.get(source_name, "#000000")
+                                file_colors.get(source_name, "#000000")
                             ),
                         },
                         info_mode="on_hover",
@@ -332,18 +330,6 @@ if uploaded_files:
         except Exception as e:
             st.warning(f"Could not set map bounds: {e}")
 
-    m.to_streamlit()
-
-    # Display color legend
-    with st.expander("🎨 Color Legend", expanded=True):
-        for name, color in color_legend:
-            st.markdown(
-                f"<div style='display:flex;align-items:center;gap:10px;'>"
-                f"<div style='width:20px;height:20px;background:{color};border-radius:3px;'></div>"
-                f"<span>{name}</span></div>",
-                unsafe_allow_html=True,
-            )
-
     # Comparison Tables
     if len(gdfs) >= 2:
         label = "Acres" if use_acres else "m²"
@@ -364,28 +350,47 @@ if uploaded_files:
 
     if len(gdfs) == 2 and show_diff:
         st.subheader("📌 Boundary Difference")
+
         try:
-            poly1 = unary_union(gdfs[0].geometry)
-            poly2 = unary_union(gdfs[1].geometry)
+            # Merge and clean
+            poly1 = unary_union(gdfs[0].geometry.apply(lambda g: make_valid(g).buffer(0)))
+            poly2 = unary_union(gdfs[1].geometry.apply(lambda g: make_valid(g).buffer(0)))
 
             only_in_1 = poly1.difference(poly2)
             only_in_2 = poly2.difference(poly1)
 
-            if not only_in_1.is_empty:
-                m.add_gdf(
-                    gpd.GeoDataFrame(geometry=[only_in_1], crs="EPSG:4326"),
-                    layer_name="Only in 1st",
-                    style={"color": "red"},
-                )
-            if not only_in_2.is_empty:
-                m.add_gdf(
-                    gpd.GeoDataFrame(geometry=[only_in_2], crs="EPSG:4326"),
-                    layer_name="Only in 2nd",
-                    style={"color": "blue"},
-                )
+            def safe_add_diff(m, geometry, crs, label, color):
+                if not geometry.is_empty and isinstance(geometry, (Polygon, MultiPolygon)):
+                    m.add_gdf(
+                        gpd.GeoDataFrame(geometry=[geometry], crs=crs),
+                        layer_name=label,
+                        style={"color": color, "weight": 4, "fillOpacity": 0.4}
+                    )
+                else:
+                    st.warning(f"⚠️ Difference result for '{label}' is not displayable.")
+
+            safe_add_diff(m, only_in_1, gdfs[0].crs, "Only in 1st", "red")
+            safe_add_diff(m, only_in_2, gdfs[1].crs, "Only in 2nd", "blue")
 
             st.markdown("🔴 **Red = Only in 1st file**  🔵 **Blue = Only in 2nd file**")
+
+            st.write("Geom types:", poly1.geom_type, poly2.geom_type)
+            st.write("Only in first - empty?", only_in_1.is_empty)
+            st.write("Only in second - empty?", only_in_2.is_empty)
+
         except Exception as e:
             st.warning(f"⚠️ Could not compute boundary difference: {e}")
+
+    m.to_streamlit()
+    # Display color legend
+    with st.expander("🎨 Color Legend", expanded=True):
+        for name, color in color_legend:
+            st.markdown(
+                f"<div style='display:flex;align-items:center;gap:10px;'>"
+                f"<div style='width:20px;height:20px;background:{color};border-radius:3px;'></div>"
+                f"<span>{name}</span></div>",
+                unsafe_allow_html=True,
+            )
+
 else:
-    st.info("Upload 1 or more files to visualize and compare field boundaries.")
+    st.info("Upload 1 or 2 files to visualize and compare field boundaries.")
