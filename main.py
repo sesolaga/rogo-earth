@@ -1,21 +1,30 @@
-import streamlit as st
-import geopandas as gpd
-import zipfile
-import tempfile
-import os
 import io
-from pyproj import Geod
+import os
+import tempfile
+import zipfile
+from typing import List
+
+import geopandas as gpd
 import leafmap.foliumap as leafmap
+import pandas as pd
+import streamlit as st
+from pyproj import Geod
+from shapely.geometry import MultiPolygon, Polygon, GeometryCollection
+from shapely.geometry.base import BaseGeometry
 from shapely.ops import unary_union
 from shapely.validation import make_valid
-from shapely.geometry import Polygon, MultiPolygon
-import pandas as pd
 
 st.set_page_config(page_title="Field Area Comparator", layout="wide")
 st.title("🗌️ Field Boundary Comparison & Area Calculator")
 
 ACRES_PER_SQ_METER = 0.000247105
 geod = Geod(ellps="WGS84")
+
+COLOR_PALETTE = [
+    "#1f77b4", "#ff7f0e", "#2ca02c", "#d62728",
+    "#9467bd", "#8c564b", "#e377c2", "#7f7f7f",
+    "#bcbd22", "#17becf"
+]
 
 
 def extract_zip(zip_bytes: bytes) -> str:
@@ -40,8 +49,7 @@ def read_vector_file(file: io.BytesIO, filename: str) -> gpd.GeoDataFrame:
                 zf.extractall(tmpdir)
                 for name in zf.namelist():
                     if name.endswith(".kml"):
-                        kml_path = os.path.join(tmpdir, name)
-                        return gpd.read_file(kml_path, driver="KML")
+                        return gpd.read_file(os.path.join(tmpdir, name), driver="KML")
 
     elif ext == ".kml":
         return gpd.read_file(file, driver="KML")
@@ -53,7 +61,7 @@ def read_vector_file(file: io.BytesIO, filename: str) -> gpd.GeoDataFrame:
         raise ValueError("Unsupported file format.")
 
 
-def geodetic_area(geometry):
+def geodetic_area(geometry: BaseGeometry) -> float:
     if geometry.geom_type == "Polygon":
         area, _ = geod.geometry_area_perimeter(geometry)
         return abs(area)
@@ -62,37 +70,84 @@ def geodetic_area(geometry):
     return 0
 
 
-def clean_geometries(gdf):
+def clean_geometries(gdf: gpd.GeoDataFrame) -> gpd.GeoSeries:
     return gdf.geometry.apply(lambda geom: make_valid(geom).buffer(0))
 
 
-def extract_holes(geometry):
+def extract_holes(geometry: BaseGeometry) -> List[Polygon]:
     holes = []
     if isinstance(geometry, Polygon):
-        for interior in geometry.interiors:
-            holes.append(Polygon(interior))
+        holes.extend(Polygon(interior) for interior in geometry.interiors)
     elif isinstance(geometry, MultiPolygon):
         for poly in geometry.geoms:
-            for interior in poly.interiors:
-                holes.append(Polygon(interior))
+            holes.extend(Polygon(interior) for interior in poly.interiors)
     return holes
 
+
+def count_parts(geometry: BaseGeometry) -> int:
+    if isinstance(geometry, Polygon):
+        return 1
+    elif isinstance(geometry, MultiPolygon):
+        return len([g for g in geometry.geoms if isinstance(g, (Polygon))])
+    elif isinstance(geometry, GeometryCollection):
+        return len([g for g in geometry.geoms if isinstance(g, (Polygon, MultiPolygon))])
+
+    return 0
+
+
+def count_holes(geometry: BaseGeometry) -> int:
+    if isinstance(geometry, Polygon):
+        return len(geometry.interiors)
+    elif isinstance(geometry, MultiPolygon):
+        return sum(len(poly.interiors) for poly in geometry.geoms)
+    elif isinstance(geometry, GeometryCollection):
+        return sum(count_holes(geom) for geom in geometry.geoms)
+    return 0
+
+
+def get_poly_type(geometry: BaseGeometry) -> str:
+    if isinstance(geometry, Polygon):
+        return "polygon"
+    elif isinstance(geometry, MultiPolygon):
+        return "multipolygon"
+    elif isinstance(geometry, GeometryCollection):
+        return "geom collection"
+
+    return "unknown"
+
+
+# UI
 uploaded_files = st.file_uploader(
-    "Upload 1 or more field boundary files (ZIP, KML, KMZ, GeoJSON)", 
-    type=["zip", "kml", "kmz", "geojson", "json"], 
-    accept_multiple_files=True
+    "Upload 1 or more field boundary files (ZIP, KML, KMZ, GeoJSON)",
+    type=["zip", "kml", "kmz", "geojson", "json"],
+    accept_multiple_files=True,
 )
+
+COLOR_PALETTE = [
+    "#1f77b4", "#ff7f0e", "#2ca02c", "#d62728",
+    "#9467bd", "#8c564b", "#e377c2", "#7f7f7f",
+    "#bcbd22", "#17becf"
+]
+
+file_colors = {}
+if uploaded_files:
+    st.markdown("### 🎨 Choose Boundary Colors")
+    for idx, file in enumerate(uploaded_files):
+        default_color = COLOR_PALETTE[idx % len(COLOR_PALETTE)]
+        file_colors[file.name] = st.color_picker(f"Color for {file.name}", default_color)
+
+hole_color = st.color_picker("Color for holes", "#ffffff")
 
 use_spherical = st.toggle("🌐 Use spherical (Turf-style) area calculation", value=True)
 use_acres = st.toggle("📏 Show area in Acres", value=True)
 
 if uploaded_files:
     gdfs = []
-    map_center = [39.5, -98.35]  # Default center over the US
+    map_center = [39.5, -98.35]
     m = leafmap.Map(center=map_center, zoom=4, height=600)
-
-    visibility_state = {}
     map_bounds = []
+
+    color_legend = []
 
     for file_idx, file in enumerate(uploaded_files):
         try:
@@ -119,8 +174,18 @@ if uploaded_files:
             gdf["area_m2"] = gdf["area_m2"].round(2)
             gdf["area_acres"] = gdf["area_acres"].round(2)
             gdf["poly_id"] = [f"{file_idx+1}-{i+1}" for i in range(len(gdf))]
-            gdf["tooltip"] = gdf.apply(lambda row: f"{row['poly_id']}\n{row['area_acres']} acres\n{row['area_m2']} m²", axis=1)
+            gdf["tooltip"] = gdf.apply(
+                lambda row: f"{row['poly_id']}\n{row['area_acres']} acres\n{row['area_m2']} m²",
+                axis=1,
+            )
             gdf["enabled"] = True
+            gdf["poly_type"] = gdf.geometry.apply(get_poly_type)
+            gdf["parts"] = gdf.geometry.apply(count_parts)
+            gdf["holes"] = gdf.geometry.apply(count_holes)
+
+            color = COLOR_PALETTE[file_idx % len(COLOR_PALETTE)]
+            gdf["color"] = color
+            color_legend.append((file.name, color))
 
             gdfs.append(gdf)
 
@@ -130,26 +195,34 @@ if uploaded_files:
     st.subheader("🗺️ Map View")
 
     for gdf in gdfs:
-        source_name = gdf['source'].iloc[0]
+        source_name = gdf["source"].iloc[0]
         st.subheader(f"📏 Area Table: {source_name}")
 
         unit = "area_acres" if use_acres else "area_m2"
         label = "Acres" if use_acres else "m²"
 
-        df_table = pd.DataFrame({
-            "ID": gdf["poly_id"],
-            label: gdf[unit],
-            "Visible": gdf["enabled"],
-        })
+        df_table = pd.DataFrame(
+            {
+                "ID": gdf["poly_id"],
+                "Type": gdf["poly_type"],
+                "Parts": gdf["parts"],
+                "Holes": gdf["holes"],
+                label: gdf[unit],
+                "Visible": gdf["enabled"],
+            }
+        )
 
         edited_df = st.data_editor(
             df_table.set_index("ID"),
             use_container_width=True,
-            disabled=[label],
+            disabled=[label, "Parts"],
             column_config={
+                "Type": st.column_config.TextColumn(),
+                "Parts": st.column_config.NumberColumn(format="%d"),
+                "Holes": st.column_config.NumberColumn(format="%d"),
                 label: st.column_config.NumberColumn(format="%.2f"),
-                "Visible": st.column_config.CheckboxColumn()
-            }
+                "Visible": st.column_config.CheckboxColumn(),
+            },
         )
 
         for idx, row in gdf.iterrows():
@@ -162,13 +235,30 @@ if uploaded_files:
         for idx, row in gdf.iterrows():
             if row["enabled"]:
                 gdf_row = gpd.GeoDataFrame([row], crs=gdf.crs)
-                m.add_gdf(gdf_row, layer_name=f"{row['poly_id']} ({source_name})", style={"fillOpacity": 0.4}, info_mode="on_hover")
+                m.add_gdf(
+                    gdf_row,
+                    layer_name=f"{row['poly_id']} ({source_name})",
+                    style={
+                        "fillOpacity": 0.4,
+                        "color": file_colors.get(gdf["source"].iloc[0], "#000000"),
+                        "fillColor": file_colors.get(gdf["source"].iloc[0], "#000000"),
+                    },
+                    info_mode="on_hover",
+                )
                 map_bounds.append(row.geometry.bounds)
 
                 for hole in extract_holes(row.geometry):
-                    m.add_gdf(gpd.GeoDataFrame(geometry=[hole], crs=gdf.crs), layer_name="hole", style={"color": "white", "fillColor": "white", "fillOpacity": 1})
+                    m.add_gdf(
+                        gpd.GeoDataFrame(geometry=[hole], crs=gdf.crs),
+                        layer_name="hole",
+                        style={
+                            "color": hole_color,
+                            "fillColor": hole_color,
+                            "fillOpacity": 1,
+                        },
+                    )
 
-    if len(map_bounds) > 0 and m is not None:
+    if map_bounds:
         try:
             minx = min(b[0] for b in map_bounds)
             miny = min(b[1] for b in map_bounds)
@@ -180,11 +270,23 @@ if uploaded_files:
 
     m.to_streamlit()
 
+    # Display color legend
+    with st.expander("🎨 Color Legend", expanded=True):
+        for name, color in color_legend:
+            st.markdown(f"<div style='display:flex;align-items:center;gap:10px;'>"
+                        f"<div style='width:20px;height:20px;background:{color};border-radius:3px;'></div>"
+                        f"<span>{name}</span></div>", unsafe_allow_html=True)
+
+    # Comparison Tables
     if len(gdfs) >= 2:
         st.subheader("🔄 Side-by-side Comparison")
         comp_data = {
-            f"{gdfs[0]['source'].iloc[0]} ({'acres' if use_acres else 'm²'})": gdfs[0]["area_acres" if use_acres else "area_m2"].reset_index(drop=True),
-            f"{gdfs[1]['source'].iloc[0]} ({'acres' if use_acres else 'm²'})": gdfs[1]["area_acres" if use_acres else "area_m2"].reset_index(drop=True),
+            f"{gdfs[0]['source'].iloc[0]} ({'acres' if use_acres else 'm²'})": gdfs[0][
+                "area_acres" if use_acres else "area_m2"
+            ].reset_index(drop=True),
+            f"{gdfs[1]['source'].iloc[0]} ({'acres' if use_acres else 'm²'})": gdfs[1][
+                "area_acres" if use_acres else "area_m2"
+            ].reset_index(drop=True),
         }
         comp_df = pd.DataFrame(comp_data)
         comp_df["Difference"] = (comp_df.iloc[:, 0] - comp_df.iloc[:, 1]).round(2)
@@ -200,9 +302,17 @@ if uploaded_files:
             only_in_2 = poly2.difference(poly1)
 
             if not only_in_1.is_empty:
-                m.add_gdf(gpd.GeoDataFrame(geometry=[only_in_1], crs="EPSG:4326"), layer_name="Only in 1st", style={"color": "red"})
+                m.add_gdf(
+                    gpd.GeoDataFrame(geometry=[only_in_1], crs="EPSG:4326"),
+                    layer_name="Only in 1st",
+                    style={"color": "red"},
+                )
             if not only_in_2.is_empty:
-                m.add_gdf(gpd.GeoDataFrame(geometry=[only_in_2], crs="EPSG:4326"), layer_name="Only in 2nd", style={"color": "blue"})
+                m.add_gdf(
+                    gpd.GeoDataFrame(geometry=[only_in_2], crs="EPSG:4326"),
+                    layer_name="Only in 2nd",
+                    style={"color": "blue"},
+                )
 
             st.markdown("🔴 **Red = Only in 1st file**  🔵 **Blue = Only in 2nd file**")
         except Exception as e:
