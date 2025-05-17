@@ -1,11 +1,12 @@
-import streamlit as st
-import geopandas as gpd
-import zipfile
-import tempfile
-import os
 import io
-from pyproj import Geod
+import os
+import tempfile
+import zipfile
+
+import geopandas as gpd
 import leafmap.foliumap as leafmap
+import streamlit as st
+from pyproj import Geod
 
 st.set_page_config(page_title="Field Area Calculator", layout="wide")
 st.title("🌾 Field Boundary Area Calculator")
@@ -13,11 +14,14 @@ st.title("🌾 Field Boundary Area Calculator")
 ACRES_PER_SQ_METER = 0.000247105
 geod = Geod(ellps="WGS84")
 
+
 def extract_zip(zip_bytes: bytes) -> str:
     tmpdir = tempfile.mkdtemp()
     with zipfile.ZipFile(io.BytesIO(zip_bytes)) as z:
         z.extractall(tmpdir)
+
     return tmpdir
+
 
 def read_vector_file(file: io.BytesIO, filename: str) -> gpd.GeoDataFrame:
     ext = os.path.splitext(filename)[1].lower()
@@ -46,16 +50,22 @@ def read_vector_file(file: io.BytesIO, filename: str) -> gpd.GeoDataFrame:
     else:
         raise ValueError("Unsupported file format.")
 
+
 def geodetic_area(geometry):
     if geometry.geom_type == "Polygon":
         area, _ = geod.geometry_area_perimeter(geometry)
+
         return abs(area)
     elif geometry.geom_type == "MultiPolygon":
-        return sum(abs(geod.geometry_area_perimeter(poly)[0]) for poly in geometry.geoms)
+        return sum(
+            abs(geod.geometry_area_perimeter(poly)[0]) for poly in geometry.geoms
+        )
     return 0
 
+
 uploaded_file = st.file_uploader(
-    "Upload a ZIP of shapefiles, KML, KMZ, or GeoJSON", type=["zip", "kml", "kmz", "geojson", "json"]
+    "Upload a ZIP of shapefiles, KML, KMZ, or GeoJSON",
+    type=["zip", "kml", "kmz", "geojson", "json"],
 )
 
 use_spherical = st.toggle("🌐 Use spherical (Turf-style) area calculation", value=True)
