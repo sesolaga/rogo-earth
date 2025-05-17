@@ -273,8 +273,15 @@ if uploaded_files:
             pid = row["poly_id"]
             gdf.at[idx, "enabled"] = edited_df.loc[pid]["Visible"]
 
-        total = edited_df[label][edited_df["Visible"]].sum()
-        st.markdown(f"**Total: {round(total, 2)} {label}**")
+        # Compute totals for visible features
+        visible_df = edited_df[edited_df["Visible"]]
+
+        total_acres = visible_df[label].sum()
+        total_parts = visible_df["Parts"].sum()
+        total_holes = visible_df["Holes"].sum()
+
+        # Display totals
+        st.markdown(f"**Total: {round(total_acres, 2)} {label}**, {int(total_parts)} parts, {int(total_holes)} holes")
 
         if layer_visibility.get(source_name, True):
             for idx, row in gdf.iterrows():
@@ -339,6 +346,8 @@ if uploaded_files:
 
     # Comparison Tables
     if len(gdfs) >= 2:
+        label = "Acres" if use_acres else "m²"
+
         st.subheader("🔄 Side-by-side Comparison")
         comp_data = {
             f"{gdfs[0]['source'].iloc[0]} ({'acres' if use_acres else 'm²'})": gdfs[0][
@@ -351,6 +360,7 @@ if uploaded_files:
         comp_df = pd.DataFrame(comp_data)
         comp_df["Difference"] = (comp_df.iloc[:, 0] - comp_df.iloc[:, 1]).round(2)
         st.dataframe(comp_df)
+        st.markdown(f"**Total diff: {round(comp_df["Difference"].sum(), 2)} {label}**")
 
     if len(gdfs) == 2 and show_diff:
         st.subheader("📌 Boundary Difference")
