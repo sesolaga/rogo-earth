@@ -459,6 +459,7 @@ def set_map_bounds(m, gdfs):
         maxx = max(x[0] for x in map_bounds)
         maxy = max(x[1] for x in map_bounds)
 
+        # TODO: doesn't work for some KML files - investigate
         m.fit_bounds([[miny, minx], [maxy, maxx]])
 
         bbox = box(minx, miny, maxx, maxy)
